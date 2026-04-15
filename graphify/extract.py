@@ -955,6 +955,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
 
         if node.type in config.call_types:
             callee_name: str | None = None
+            nav_receiver: str | None = None  # receiver of obj.method() for fallback resolution
 
             # Special handling per language
             if config.ts_module == "tree_sitter_swift":
@@ -978,6 +979,12 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type in ("simple_identifier", "identifier"):
                         callee_name = _read_text(first, source)
                     elif first.type == "navigation_expression":
+                        # Capture receiver (first identifier) for self-name collision fallback.
+                        # e.g. service.doThing() → receiver="service", callee="doThing"
+                        for child in first.children:
+                            if child.type in ("simple_identifier", "identifier"):
+                                nav_receiver = _read_text(child, source)
+                                break
                         for child in reversed(first.children):
                             if child.type in ("simple_identifier", "identifier"):
                                 callee_name = _read_text(child, source)
@@ -1072,6 +1079,16 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "source_file": str_path,
+                        "source_location": f"L{node.start_point[0] + 1}",
+                    })
+                elif tgt_nid == caller_nid and nav_receiver and nav_receiver.lower() != callee_name.lower():
+                    # Self-name collision: obj.sameNameMethod() resolved to the caller itself.
+                    # The real callee is in another class — record the receiver object name so
+                    # cross-file resolution can link to the correct class/service node.
+                    raw_calls.append({
+                        "caller_nid": caller_nid,
+                        "callee": nav_receiver,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })

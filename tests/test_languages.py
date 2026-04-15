@@ -224,6 +224,26 @@ def test_kotlin_call_count():
         f"Expected ≥4 call edges, got {len(call_edges)}: {[e['target'] for e in call_edges]}"
     )
 
+def test_kotlin_self_name_collision_fallback():
+    """When obj.method() shares its name with the caller, record the receiver in raw_calls.
+
+    ProxyClient.get() calls delegate.get(path). The callee 'get' resolves to
+    ProxyClient.get itself (same name, same file) — a self-reference that would
+    silently drop the edge before this fix. The fix falls back to the receiver
+    'delegate' so cross-file resolution can link to HttpClient.
+    """
+    r = extract_kotlin(FIXTURES / "sample.kt")
+    raw = r.get("raw_calls", [])
+    proxy_get_nid = next(
+        (n["id"] for n in r["nodes"] if "proxyclient" in n["id"] and n["id"].endswith("_get")),
+        None,
+    )
+    assert proxy_get_nid is not None, "ProxyClient.get node not found"
+    receiver_calls = [rc["callee"] for rc in raw if rc["caller_nid"] == proxy_get_nid]
+    assert "delegate" in receiver_calls, (
+        f"Expected 'delegate' in raw_calls fallback, got: {receiver_calls}"
+    )
+
 
 # ── Scala ─────────────────────────────────────────────────────────────────────
 
