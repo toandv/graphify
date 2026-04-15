@@ -1084,11 +1084,13 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     })
                 elif tgt_nid == caller_nid and nav_receiver and nav_receiver.lower() != callee_name.lower():
                     # Self-name collision: obj.sameNameMethod() resolved to the caller itself.
-                    # The real callee is in another class — record the receiver object name so
-                    # cross-file resolution can link to the correct class/service node.
+                    # Store the receiver AND the original method name so cross-file resolution
+                    # can first try to find the specific method on the resolved class, and only
+                    # fall back to the class node if no matching method exists.
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": nav_receiver,
+                        "callee_method": callee_name,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -3160,6 +3162,8 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
     # Each extractor saved unresolved calls in raw_calls. Now that we have all
     # nodes from all files, resolve any callee that exists in another file.
     global_label_to_nid: dict[str, str] = {}
+    # Also build a set of all node IDs for method-on-class lookup
+    all_node_ids: set[str] = {n["id"] for n in all_nodes}
     for n in all_nodes:
         raw = n.get("label", "")
         normalised = raw.strip("()").lstrip(".")
@@ -3173,6 +3177,15 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
             if not callee:
                 continue
             tgt = global_label_to_nid.get(callee.lower())
+            # If a callee_method hint is present (self-name collision fallback), try to
+            # resolve to the specific method on the class rather than the class node itself.
+            # e.g. callee="userRewardApplicationService", callee_method="markAsUnusedByConsumer"
+            # → prefer userrewardapplicationservice_..._markasunusedbyconsumer over the class.
+            callee_method = rc.get("callee_method", "")
+            if tgt and callee_method:
+                candidate = f"{tgt}_{callee_method.lower()}"
+                if candidate in all_node_ids:
+                    tgt = candidate
             caller = rc["caller_nid"]
             if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
                 existing_pairs.add((caller, tgt))

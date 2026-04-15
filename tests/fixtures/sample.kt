@@ -23,8 +23,9 @@ fun createClient(baseUrl: String): HttpClient {
 }
 
 // Self-name collision fixture: get() here has the same name as HttpClient.get() above.
-// When this calls delegate.get(path), the extractor must NOT silently discard the call
-// because "get" resolves to the caller itself — it should fall back to "delegate".
-class ProxyClient(private val delegate: HttpClient) {
-    fun get(path: String): String = delegate.get(path)
+// When httpClient.get(path) is called, "get" resolves to ProxyClient.get (the caller) —
+// a self-name collision. The fix records receiver="httpClient", callee_method="get" so
+// cross-file resolution can find HttpClient.get instead of just HttpClient.
+class ProxyClient(private val httpClient: HttpClient) {
+    fun get(path: String): String = httpClient.get(path)
 }

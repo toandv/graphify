@@ -225,23 +225,34 @@ def test_kotlin_call_count():
     )
 
 def test_kotlin_self_name_collision_fallback():
-    """When obj.method() shares its name with the caller, record the receiver in raw_calls.
+    """When obj.method() shares its name with the caller, the edge must target
+    the specific method on the resolved class — not just the class node.
 
-    ProxyClient.get() calls delegate.get(path). The callee 'get' resolves to
-    ProxyClient.get itself (same name, same file) — a self-reference that would
-    silently drop the edge before this fix. The fix falls back to the receiver
-    'delegate' so cross-file resolution can link to HttpClient.
+    ProxyClient.get() calls delegate.get(path). 'get' resolves to ProxyClient.get
+    (caller itself) → self-name collision. The fix records the receiver 'delegate'
+    plus callee_method 'get' in raw_calls. Cross-file resolution then finds
+    HttpClient.get() rather than just HttpClient.
     """
-    r = extract_kotlin(FIXTURES / "sample.kt")
-    raw = r.get("raw_calls", [])
-    proxy_get_nid = next(
-        (n["id"] for n in r["nodes"] if "proxyclient" in n["id"] and n["id"].endswith("_get")),
+    from graphify.extract import extract
+    result = extract([FIXTURES / "sample.kt"])
+    call_edges = [e for e in result["edges"] if e["relation"] == "calls"]
+    # ProxyClient.get → HttpClient.get (the method), not HttpClient (the class)
+    proxy_get_src = next(
+        (n["id"] for n in result["nodes"]
+         if "proxyclient" in n["id"] and n["id"].endswith("_get")),
         None,
     )
-    assert proxy_get_nid is not None, "ProxyClient.get node not found"
-    receiver_calls = [rc["callee"] for rc in raw if rc["caller_nid"] == proxy_get_nid]
-    assert "delegate" in receiver_calls, (
-        f"Expected 'delegate' in raw_calls fallback, got: {receiver_calls}"
+    httpclient_get_tgt = next(
+        (n["id"] for n in result["nodes"]
+         if "httpclient" in n["id"] and n["id"].endswith("_get")
+         and "proxy" not in n["id"]),
+        None,
+    )
+    assert proxy_get_src, "ProxyClient.get node not found"
+    assert httpclient_get_tgt, "HttpClient.get node not found"
+    edge_targets = [e["target"] for e in call_edges if e["source"] == proxy_get_src]
+    assert httpclient_get_tgt in edge_targets, (
+        f"Expected call to HttpClient.get ({httpclient_get_tgt}), got: {edge_targets}"
     )
 
 
